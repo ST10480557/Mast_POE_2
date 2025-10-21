@@ -42,7 +42,7 @@ export default function App(): JSX.Element {
   const [menu, setMenu] = useState<Dish[]>([]);
   const [screen, setScreen] = useState<"customer" | "chef">("customer");
 
-  // load persisted menu
+
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((r) => {
@@ -94,7 +94,7 @@ export default function App(): JSX.Element {
       <View style={styles.appHeader}>
         <Text style={styles.appTitle}>Chef Christoffel</Text>
         <Text style={styles.appSubtitle}>Fresh menu — always up to date</Text>
-        {/* total number of dishes shown on home screen */}
+
         <Text style={styles.appCount}>{menu.length} dishes</Text>
       </View>
 
@@ -117,8 +117,6 @@ export default function App(): JSX.Element {
     </SafeAreaView>
   );
 }
-
-/* --- Customer screen --- */
 function CustomerScreen({ menu, onOpenChef }: { menu: Dish[]; onOpenChef: () => void }) {
   const [filter, setFilter] = useState<"All" | Course | "Search">("All");
   const [query, setQuery] = useState("");
