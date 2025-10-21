@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { JSX, useEffect, useMemo, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -6,224 +6,366 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
-  Modal,
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+/* --- types --- */
 type Course = "Starters" | "Mains" | "Desserts";
-type Dish = { id: string; name: string; description?: string; course: Course; price: number; createdAt: number; };
+type Dish = {
+  id: string;
+  name: string;
+  description?: string;
+  course: Course;
+  price: number;
+  createdAt: number;
+};
 
-const STORAGE_KEY = "@chef_menu_items";
+/* --- constants --- */
+const STORAGE_KEY = "@chef_menu_items_v2";
 const COURSES: Course[] = ["Starters", "Mains", "Desserts"];
-
 const COLORS = {
-  primary: "#15d825ff",
-  accent: "#e63fcfff",
-  sky: "#ff7c6bff",
-  mint: "#4DD0E1",
-  dark: "#263238",
-  light: "#F7F7F8",
+  primary: "#246BFD",
+  accent: "#FF6B6B",
+  bg: "#F6F8FB",
   card: "#FFFFFF",
-  muted: "#777",
+  text: "#1F2937",
+  muted: "#6B7280",
 };
 
-const courseColors: Record<Course, string> = {
-  Starters: "#FFB86B",
-  Mains: "#6BB0FF",
-  Desserts: "#FF8ACB",
-};
-
-export default function App(): React.ReactElement {
+/* --- App --- */
+export default function App(): JSX.Element {
   const [menu, setMenu] = useState<Dish[]>([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [course, setCourse] = useState<Course>("Mains");
-  const [priceText, setPriceText] = useState("");
-  const [screen, setScreen] = useState<"home" | "chef">("home");
-  const [filter, setFilter] = useState<"All" | Course>("All");
-  const [selectedDish, setSelectedDish] = useState<Dish | null>(null);
-  const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
+  const [screen, setScreen] = useState<"customer" | "chef">("customer");
 
+  // load persisted menu
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
-      .then(r => {
+      .then((r) => {
         if (r) {
-          try { setMenu(JSON.parse(r) as Dish[]); } catch { /* ignore */ }
+          try {
+            const parsed = JSON.parse(r) as Dish[];
+            setMenu(parsed);
+          } catch {
+            // ignore parse error
+          }
         }
       })
       .catch(() => {});
   }, []);
 
-  const persist = (items: Dish[]) => AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items)).catch(()=>{});
-  const resetForm = () => { setName(""); setDescription(""); setCourse("Mains"); setPriceText(""); };
+  const persist = async (items: Dish[]) => {
+    setMenu(items);
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch {
+      // ignore
+    }
+  };
 
-  const addDish = () => {
-    if (!name.trim()) return Alert.alert("Validation", "Please enter a dish name.");
-    const price = parseFloat(priceText);
-    if (Number.isNaN(price) || price < 0) return Alert.alert("Validation", "Please enter a valid non-negative price.");
-    const d: Dish = { id: String(Date.now()), name: name.trim(), description: description.trim(), course, price, createdAt: Date.now() };
-    const updated = [d, ...menu];
-    setMenu(updated); persist(updated); resetForm(); setModalVisible(false);
+  const addDish = (d: Omit<Dish, "id" | "createdAt">) => {
+    const newDish: Dish = { ...d, id: String(Date.now()), createdAt: Date.now() };
+    persist([newDish, ...menu]);
+    setScreen("customer");
   };
 
   const removeDish = (id: string) => {
-    const doDelete = (del: string) => { const u = menu.filter(m => m.id !== del); setMenu(u); persist(u); };
+    const doDelete = () => {
+      const next = menu.filter((m) => m.id !== id);
+      persist(next);
+    };
     if (Platform.OS === "web" && typeof window !== "undefined") {
-      if (window.confirm("Are you sure you want to delete this dish?")) doDelete(id);
+      if (window.confirm("Delete this dish?")) doDelete();
       return;
     }
-    Alert.alert("Delete dish", "Are you sure you want to delete this dish?", [
+    Alert.alert("Delete", "Remove this dish?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => doDelete(id) },
+      { text: "Delete", style: "destructive", onPress: doDelete },
     ]);
   };
 
-  const DishCard = ({ item, chef = false }: { item: Dish; chef?: boolean }) => {
-    const isSelected = selectedDishId === item.id;
-    return (
-      <TouchableOpacity activeOpacity={chef ? 1 : 0.9} onPress={() => !chef && setSelectedDish(item)} style={[styles.dishCard, styles.shadow, isSelected && styles.dishCardSelected]}>
-        <View style={[styles.accentStrip, { backgroundColor: courseColors[item.course] }]} />
-        <View style={styles.dishLeft}>
-          <View style={[styles.badge, { backgroundColor: courseColors[item.course] }]}><Text style={styles.badgeText}>{item.course}</Text></View>
-          <Text style={styles.dishName}>{item.name}</Text>
-          {item.description ? <Text style={styles.dishDesc}>{item.description}</Text> : null}
-        </View>
-        <View style={styles.dishRight}>
-          <Text style={styles.price}>R{item.price.toFixed(2)}</Text>
-          {chef ? <TouchableOpacity onPress={() => removeDish(item.id)} style={styles.deleteButton}><Text style={styles.deleteText}>Delete</Text></TouchableOpacity> : (isSelected ? <Text style={styles.selectedMark}>✓ Selected</Text> : null)}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  // Home
-  if (screen === "home") {
-    const visible = filter === "All" ? menu : menu.filter(m => m.course === filter);
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.headerWrap}>
-          <View style={styles.headerTop} />
-          <View style={[styles.headerCard, styles.shadow]}>
-            <View style={styles.chefRow}>
-              <View style={styles.avatar}><Text style={styles.avatarInitial}>C</Text></View>
-              <View style={styles.chefInfo}><Text style={styles.title}>Chef Christoffel</Text><Text style={styles.tagline}>Latest menu — curated daily</Text></View>
-            </View>
-            <View style={styles.filterRow}>
-              <TouchableOpacity style={[styles.filterBtn, filter === "All" && styles.filterBtnActive]} onPress={() => setFilter("All")}><Text style={[styles.filterText, filter === "All" && styles.filterTextActive]}>All</Text></TouchableOpacity>
-              {COURSES.map(c => <TouchableOpacity key={c} style={[styles.filterBtn, filter === c && styles.filterBtnActive]} onPress={() => setFilter(c)}><Text style={[styles.filterText, filter === c && styles.filterTextActive]}>{c}</Text></TouchableOpacity>)}
-            </View>
-          </View>
-        </View>
-
-        <FlatList<Dish> data={visible} keyExtractor={i => i.id} renderItem={({ item }) => <DishCard item={item} />} ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyText}>No dishes yet. Come back soon.</Text></View>} contentContainerStyle={{ padding: 16, paddingBottom: 120 }} />
-
-        <View style={{ padding: 16 }}>
-          <TouchableOpacity style={[styles.loginBtn, { backgroundColor: COLORS.dark }]} onPress={() => setScreen("chef")}><Text style={{ color: "#fff", fontWeight: "800" }}>Manage menu (Chef)</Text></TouchableOpacity>
-        </View>
-
-        <Modal visible={!!selectedDish} animationType="fade" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.detailModal, styles.shadow]}>
-              <Text style={styles.modalTitle}>{selectedDish?.name}</Text>
-              <Text style={styles.dishMeta}>{selectedDish?.course} • R{selectedDish ? selectedDish.price.toFixed(2) : ""}</Text>
-              {selectedDish?.description ? <Text style={styles.dishDesc}>{selectedDish.description}</Text> : null}
-              <View style={{ flexDirection: "row", marginTop: 14 }}>
-                <TouchableOpacity onPress={() => setSelectedDish(null)} style={[styles.actionButton, styles.cancelButton]}><Text style={styles.actionText}>Close</Text></TouchableOpacity>
-                <TouchableOpacity onPress={() => { if (selectedDish) setSelectedDishId(selectedDish.id); setSelectedDish(null); }} style={[styles.actionButton, styles.saveButton]}><Text style={[styles.actionText, { color: "#fff" }]}>Select</Text></TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      </SafeAreaView>
-    );
-  }
-
-  // Chef
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.headerWrap}>
-        <View style={styles.headerTop} />
-        <View style={[styles.headerCard, styles.shadow]}>
-          <View style={styles.chefRow}>
-            <View style={styles.avatar}><Text style={styles.avatarInitial}>C</Text></View>
-            <View style={styles.chefInfo}><Text style={styles.title}>Chef Management</Text><Text style={styles.tagline}>Add or remove dishes</Text></View>
-          </View>
-          <View style={styles.summaryRow}>
-            <View style={[styles.summaryCard, { backgroundColor: "#FFF3E0" }]}><Text style={[styles.summaryNumber, { color: COLORS.primary }]}>{menu.length}</Text><Text style={styles.summaryLabel}>Total dishes</Text></View>
-            <View style={[styles.summaryCard, { backgroundColor: "#E1F5FE" }]}><Text style={[styles.summaryNumber, { color: COLORS.sky }]}>{menu.filter(m => m.course === "Starters").length}</Text><Text style={styles.summaryLabel}>Starters</Text></View>
-            <View style={[styles.summaryCard, { backgroundColor: "#E8F5E9" }]}><Text style={[styles.summaryNumber, { color: COLORS.mint }]}>{menu.filter(m => m.course === "Mains").length}</Text><Text style={styles.summaryLabel}>Mains</Text></View>
-            <View style={[styles.summaryCard, { backgroundColor: "#FCE4EC" }]}><Text style={[styles.summaryNumber, { color: COLORS.accent }]}>{menu.filter(m => m.course === "Desserts").length}</Text><Text style={styles.summaryLabel}>Desserts</Text></View>
-          </View>
-        </View>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar backgroundColor={COLORS.primary} barStyle="light-content" />
+      <View style={styles.appHeader}>
+        <Text style={styles.appTitle}>Chef Christoffel</Text>
+        <Text style={styles.appSubtitle}>Fresh menu — always up to date</Text>
+        {/* total number of dishes shown on home screen */}
+        <Text style={styles.appCount}>{menu.length} dishes</Text>
       </View>
 
-      <FlatList<Dish> data={menu} keyExtractor={i => i.id} renderItem={({ item }) => <DishCard item={item} chef />} ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyText}>No dishes yet. Tap + to add the first dish.</Text></View>} contentContainerStyle={{ padding: 16, paddingBottom: 120 }} />
-
-      <TouchableOpacity style={[styles.fab, styles.shadow]} onPress={() => setModalVisible(true)} accessibilityLabel="Add dish"><Text style={styles.fabText}>+</Text></TouchableOpacity>
-
-      <View style={{ position: "absolute", left: 16, top: 24 }}>
-        <TouchableOpacity style={[styles.backBtnInline]} onPress={() => setScreen("home")}><Text style={{ color: COLORS.dark, fontWeight: "700" }}>← Home</Text></TouchableOpacity>
+      <View style={styles.screenWrap}>
+        {screen === "customer" ? (
+          <CustomerScreen menu={menu} onOpenChef={() => setScreen("chef")} />
+        ) : (
+          <ChefScreen menu={menu} onAdd={addDish} onRemove={removeDish} onBack={() => setScreen("customer")} />
+        )}
       </View>
 
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalWrap}>
-          <View style={[styles.modalContent, styles.shadow]}>
-            <Text style={styles.modalTitle}>Add New Dish</Text>
-            <TextInput placeholder="Dish name" value={name} onChangeText={setName} style={styles.input} />
-            <TextInput placeholder="Description (optional)" value={description} onChangeText={setDescription} style={[styles.input, { height: 80 }]} multiline />
-            <View style={styles.courseRow}>{COURSES.map(c => { const sel = c === course; return (<TouchableOpacity key={c} onPress={() => setCourse(c)} style={[styles.courseButton, sel && styles.courseButtonSelected]}><Text style={[styles.courseText, sel && styles.courseTextSelected]}>{c}</Text></TouchableOpacity>); })}</View>
-            <TextInput placeholder="Price (e.g. 120.00)" value={priceText} onChangeText={(t) => setPriceText(t)} keyboardType="decimal-pad" style={styles.input} />
-            <View style={styles.modalActions}><TouchableOpacity onPress={() => { resetForm(); setModalVisible(false); }} style={[styles.actionButton, styles.cancelButton]}><Text style={styles.actionText}>Cancel</Text></TouchableOpacity><TouchableOpacity onPress={addDish} style={[styles.actionButton, styles.saveButton]}><Text style={[styles.actionText, { color: "white" }]}>Save</Text></TouchableOpacity></View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      <View style={styles.bottomNav}>
+        <TouchableOpacity style={[styles.tab, screen === "customer" && styles.tabActive]} onPress={() => setScreen("customer")}>
+          <Text style={[styles.tabText, screen === "customer" && styles.tabTextActive]}>Customer</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, screen === "chef" && styles.tabActive]} onPress={() => setScreen("chef")}>
+          <Text style={[styles.tabText, screen === "chef" && styles.tabTextActive]}>Manager</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
+/* --- Customer screen --- */
+function CustomerScreen({ menu, onOpenChef }: { menu: Dish[]; onOpenChef: () => void }) {
+  const [filter, setFilter] = useState<"All" | Course | "Search">("All");
+  const [query, setQuery] = useState("");
+  const [cart, setCart] = useState<Record<string, number>>({});
+
+  const visible = useMemo(() => {
+    let items = filter === "All" ? menu : menu.filter((m) => m.course === filter);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      items = items.filter((i) => i.name.toLowerCase().includes(q) || (i.description || "").toLowerCase().includes(q));
+    }
+    return items;
+  }, [menu, filter, query]);
+
+  const changeQty = (id: string, delta: number) =>
+    setCart((s) => {
+      const copy = { ...s };
+      const cur = copy[id] || 0;
+      const next = Math.max(0, cur + delta);
+      if (next === 0) delete copy[id];
+      else copy[id] = next;
+      return copy;
+    });
+
+  const totalItems = Object.values(cart).reduce((a, b) => a + b, 0);
+  const totalPrice = menu.reduce((sum, d) => sum + (cart[d.id] || 0) * d.price, 0);
+
+  return (
+    <View style={styles.customerWrap}>
+      <View style={styles.customerHeader}>
+        <View style={styles.filterRow}>
+          <TouchableOpacity onPress={() => setFilter("All")} style={[styles.filterPill, filter === "All" && styles.filterActive]}>
+            <Text style={[styles.filterText, filter === "All" && styles.filterTextActive]}>All</Text>
+          </TouchableOpacity>
+          {COURSES.map((c) => (
+            <TouchableOpacity key={c} onPress={() => setFilter(c)} style={[styles.filterPill, filter === c && styles.filterActive]}>
+              <Text style={[styles.filterText, filter === c && styles.filterTextActive]}>{c}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.searchRow}>
+          <TextInput placeholder="Search dishes..." style={styles.searchInput} value={query} onChangeText={setQuery} />
+          <TouchableOpacity onPress={onOpenChef} style={styles.smallBtn}>
+            <Text style={styles.smallBtnText}>Manager</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <FlatList
+        data={visible}
+        keyExtractor={(i) => i.id}
+        numColumns={2}
+        columnWrapperStyle={styles.gridRow}
+        contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No dishes available.</Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <View style={[styles.cardStrip, { backgroundColor: courseColor(item.course) }]} />
+            <Text style={styles.cardTitle}>{item.name}</Text>
+            <Text style={styles.cardCourse}>{item.course}</Text>
+            <Text style={styles.cardDesc}>{item.description}</Text>
+            <View style={styles.cardFooter}>
+              <Text style={styles.cardPrice}>R{item.price.toFixed(2)}</Text>
+              <View style={styles.qtyRow}>
+                <TouchableOpacity onPress={() => changeQty(item.id, -1)} style={styles.qtyBtn}>
+                  <Text style={styles.qtyTxt}>−</Text>
+                </TouchableOpacity>
+                <Text style={styles.qtyNumber}>{cart[item.id] || 0}</Text>
+                <TouchableOpacity onPress={() => changeQty(item.id, 1)} style={styles.qtyBtn}>
+                  <Text style={styles.qtyTxt}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+      />
+
+      <View style={styles.cartBar}>
+        <Text style={styles.cartText}>{totalItems} items • R{totalPrice.toFixed(2)}</Text>
+        <TouchableOpacity onPress={() => Alert.alert("Request", "Request sent to Chef for selected items.")} style={styles.primaryBtn}>
+          <Text style={styles.primaryBtnText}>Request Experience</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/* --- Chef screen --- */
+function ChefScreen({ menu, onAdd, onRemove, onBack }: { menu: Dish[]; onAdd: (d: Omit<Dish, "id" | "createdAt">) => void; onRemove: (id: string) => void; onBack: () => void }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [course, setCourse] = useState<Course>("Mains");
+  const [priceText, setPriceText] = useState("");
+
+  const handleAdd = () => {
+    if (!name.trim()) return Alert.alert("Validation", "Enter dish name.");
+    const price = parseFloat(priceText);
+    if (Number.isNaN(price) || price < 0) return Alert.alert("Validation", "Enter valid price.");
+    onAdd({ name: name.trim(), description: description.trim(), course, price });
+    setName("");
+    setDescription("");
+    setCourse("Mains");
+    setPriceText("");
+  };
+
+  return (
+    <KeyboardAvoidingView style={styles.chefWrap} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <View style={styles.chefTop}>
+        <TouchableOpacity onPress={onBack} style={styles.linkBack}>
+          <Text style={styles.linkBackText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.chefTitle}>Manager — Add / Remove</Text>
+        <Text style={styles.chefSubtitle}>Total {menu.length} • Starters {menu.filter((m) => m.course === "Starters").length}</Text>
+      </View>
+
+      <View style={styles.form}>
+        <TextInput placeholder="Name" value={name} onChangeText={setName} style={styles.input} />
+        <TextInput placeholder="Description" value={description} onChangeText={setDescription} style={[styles.input, { height: 80 }]} multiline />
+        <View style={styles.courseSelect}>
+          {COURSES.map((c) => (
+            <TouchableOpacity key={c} onPress={() => setCourse(c)} style={[styles.courseOption, course === c && styles.courseOptionActive]}>
+              <Text style={[styles.courseText, course === c && styles.courseTextActive]}>{c}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TextInput placeholder="Price e.g. 120.00" value={priceText} onChangeText={setPriceText} keyboardType="decimal-pad" style={styles.input} />
+        <View style={styles.formActions}>
+          <TouchableOpacity onPress={() => { setName(""); setDescription(""); setCourse("Mains"); setPriceText(""); }} style={styles.ghostBtn}>
+            <Text style={styles.ghostTxt}>Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleAdd} style={styles.addBtn}>
+            <Text style={styles.addBtnText}>Add Dish</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <FlatList
+        data={menu}
+        keyExtractor={(i) => i.id}
+        contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
+        ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyText}>No dishes yet.</Text></View>}
+        renderItem={({ item }) => (
+          <View style={styles.listRow}>
+            <View>
+              <Text style={styles.listTitle}>{item.name}</Text>
+              <Text style={styles.listMeta}>{item.course} • R{item.price.toFixed(2)}</Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <TouchableOpacity onPress={() => onRemove(item.id)} style={styles.removeBtn}>
+                <Text style={styles.removeTxt}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      />
+    </KeyboardAvoidingView>
+  );
+}
+
+/* --- helpers & styles --- */
+function courseColor(c: Course) {
+  if (c === "Starters") return "#FFB86B";
+  if (c === "Mains") return "#6BB0FF";
+  return "#FF8ACB";
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.light },
-  headerWrap: { marginBottom: 8 }, headerTop: { height: 92, backgroundColor: COLORS.primary },
-  headerCard: { marginHorizontal: 16, marginTop: -44, backgroundColor: COLORS.card, borderRadius: 14, padding: 14, shadowColor: "#000", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 8 }, shadowRadius: 16, elevation: 3 },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  appHeader: { padding: 16, paddingTop: 20, backgroundColor: COLORS.primary },
+  appTitle: { color: "#fff", fontSize: 22, fontWeight: "800" },
+  appSubtitle: { color: "#D6E4FF", marginTop: 4 },
+  appCount: { color: "#fff", marginTop: 6, fontWeight: "700" },
 
-  chefRow: { flexDirection: "row", alignItems: "center" }, avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: COLORS.dark, alignItems: "center", justifyContent: "center" }, avatarInitial: { color: "#fff", fontWeight: "800", fontSize: 22 }, chefInfo: { marginLeft: 14 }, title: { fontSize: 20, fontWeight: "900", color: COLORS.dark }, tagline: { color: COLORS.muted, marginTop: 4 },
+  screenWrap: { flex: 1 },
 
-  summaryRow: { flexDirection: "row", marginTop: 12, justifyContent: "space-between" }, summaryCard: { flex: 1, marginHorizontal: 4, backgroundColor: COLORS.card, padding: 12, borderRadius: 10, alignItems: "center" }, summaryNumber: { fontSize: 18, fontWeight: "900" }, summaryLabel: { color: COLORS.muted, marginTop: 4, fontSize: 12 },
+  /* customer */
+  customerWrap: { flex: 1 },
+  customerHeader: { paddingHorizontal: 12, paddingTop: 12 },
+  filterRow: { flexDirection: "row", marginBottom: 8 },
+  filterPill: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 20, backgroundColor: "#fff", marginRight: 8, borderWidth: 1, borderColor: "#eee" },
+  filterActive: { backgroundColor: "#fff", borderColor: COLORS.primary, shadowColor: "#000", elevation: 2 },
+  filterText: { color: COLORS.muted, fontWeight: "700" },
+  filterTextActive: { color: COLORS.primary },
 
-  dishCard: { flexDirection: "row", backgroundColor: COLORS.card, padding: 12, borderRadius: 12, marginBottom: 12, alignItems: "center", overflow: "hidden" },
-  accentStrip: { width: 6, height: "100%", borderTopLeftRadius: 12, borderBottomLeftRadius: 12, marginRight: 12 },
-  dishCardSelected: { backgroundColor: "#FFF8E1", borderWidth: 1, borderColor: COLORS.accent },
-  dishLeft: { flex: 1 }, dishRight: { alignItems: "flex-end", marginLeft: 12 }, dishName: { fontSize: 16, fontWeight: "800", color: COLORS.dark }, dishDesc: { marginTop: 6, color: COLORS.muted, fontSize: 13 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  searchInput: { flex: 1, backgroundColor: "#fff", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#eee" },
+  smallBtn: { marginLeft: 8, backgroundColor: COLORS.accent, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  smallBtnText: { color: "#fff", fontWeight: "800" },
 
-  price: { fontSize: 14, fontWeight: "900", color: COLORS.dark },
-  deleteButton: { marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: "#f44336", backgroundColor: "#fff" }, deleteText: { color: "#f44336", fontWeight: "800" },
+  gridRow: { justifyContent: "space-between" },
+  card: { flex: 1, backgroundColor: COLORS.card, borderRadius: 10, padding: 12, marginBottom: 12, marginHorizontal: 6, minWidth: 140, maxWidth: "48%" },
+  cardStrip: { height: 6, borderRadius: 4, marginBottom: 8 },
+  cardTitle: { fontWeight: "800", color: COLORS.text },
+  cardCourse: { color: COLORS.muted, fontSize: 12, marginTop: 4 },
+  cardDesc: { color: COLORS.muted, fontSize: 13, marginTop: 8, minHeight: 36 },
+  cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10 },
+  cardPrice: { fontWeight: "900", color: COLORS.text },
+  qtyRow: { flexDirection: "row", alignItems: "center" },
+  qtyBtn: { padding: 6, borderRadius: 6, backgroundColor: "#F3F4F6", marginHorizontal: 6 },
+  qtyTxt: { fontWeight: "900" },
+  qtyNumber: { minWidth: 18, textAlign: "center", fontWeight: "800" },
 
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingTop: 40 }, emptyText: { color: COLORS.muted },
+  cartBar: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: COLORS.card, borderRadius: 12, padding: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#000", elevation: 3 },
+  cartText: { color: COLORS.text, fontWeight: "700" },
+  primaryBtn: { backgroundColor: COLORS.primary, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  primaryBtnText: { color: "#fff", fontWeight: "800" },
 
-  fab: { position: "absolute", right: 18, bottom: 28, width: 64, height: 64, borderRadius: 32, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", elevation: 8 }, fabText: { color: "#fff", fontSize: 30, fontWeight: "900" },
+  empty: { padding: 24, alignItems: "center" },
+  emptyText: { color: COLORS.muted },
 
-  modalWrap: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.35)" },
-  modalContent: { backgroundColor: "white", padding: 16, borderTopLeftRadius: 12, borderTopRightRadius: 12 }, modalTitle: { fontSize: 18, fontWeight: "800", marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: "#eee", borderRadius: 8, padding: 10, marginTop: 8, backgroundColor: "#fff" },
+  /* bottom nav */
+  bottomNav: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#eee", backgroundColor: "#fff" },
+  tab: { flex: 1, padding: 12, alignItems: "center" },
+  tabActive: { backgroundColor: "#F0F6FF" },
+  tabText: { color: COLORS.muted, fontWeight: "800" },
+  tabTextActive: { color: COLORS.primary },
 
-  courseRow: { flexDirection: "row", marginTop: 12, justifyContent: "space-between" }, courseButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: "#eee", flex: 1, marginHorizontal: 4, alignItems: "center", backgroundColor: "#fff" }, courseButtonSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary }, courseText: { color: COLORS.dark }, courseTextSelected: { color: "#fff", fontWeight: "800" },
+  /* chef */
+  chefWrap: { flex: 1 },
+  chefTop: { padding: 12, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#eee" },
+  linkBack: { marginBottom: 6 },
+  linkBackText: { color: COLORS.primary, fontWeight: "800" },
+  chefTitle: { fontSize: 18, fontWeight: "900", color: COLORS.text },
+  chefSubtitle: { color: COLORS.muted, marginTop: 4 },
 
-  modalActions: { flexDirection: "row", marginTop: 14 }, actionButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: "center", marginHorizontal: 6 }, cancelButton: { borderWidth: 1, borderColor: "#ccc", backgroundColor: "#fff" }, saveButton: { backgroundColor: COLORS.primary }, actionText: { fontWeight: "800" },
+  form: { padding: 12, backgroundColor: "#fff", marginTop: 8 },
+  input: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee", padding: 10, borderRadius: 8, marginTop: 8 },
+  courseSelect: { flexDirection: "row", marginTop: 8 },
+  courseOption: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, borderWidth: 1, borderColor: "#eee", backgroundColor: "#fff", marginRight: 8 },
+  courseOptionActive: { backgroundColor: COLORS.primary },
+  courseText: { color: COLORS.text, fontWeight: "700" },
+  courseTextActive: { color: "#fff" },
+  formActions: { flexDirection: "row", marginTop: 12 },
+  ghostBtn: { flex: 1, borderWidth: 1, borderColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginRight: 8 },
+  ghostTxt: { fontWeight: "800", color: COLORS.muted },
+  addBtn: { flex: 1, backgroundColor: COLORS.primary, padding: 12, borderRadius: 8, alignItems: "center" },
+  addBtnText: { color: "#fff", fontWeight: "900" },
 
-  badge: { alignSelf: "flex-start", paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8 }, badgeText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+  listRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12, backgroundColor: COLORS.card, marginBottom: 8, borderRadius: 8 },
+  listTitle: { fontWeight: "800", color: COLORS.text },
+  listMeta: { color: COLORS.muted, marginTop: 4 },
 
-  filterRow: { flexDirection: "row", marginTop: 12, alignItems: "center", flexWrap: "wrap" }, filterBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: "#eee", backgroundColor: "#fff", marginRight: 8, marginTop: 6 }, filterBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary }, filterText: { color: COLORS.dark, fontWeight: "800" }, filterTextActive: { color: "#fff" },
-
-  loginBtn: { paddingVertical: 12, borderRadius: 8, alignItems: "center", marginTop: 12 }, backBtnInline: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#fff", borderRadius: 8, elevation: 2 },
-
-  selectedMark: { marginTop: 8, color: "#4caf50", fontWeight: "900" },
-
-  shadow: { shadowColor: "#000", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 4 },
-
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center" }, detailModal: { width: "90%", backgroundColor: "#fff", padding: 16, borderRadius: 12 }, dishMeta: { color: COLORS.muted, marginTop: 6 },
+  removeBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: COLORS.accent },
+  removeTxt: { color: "#fff", fontWeight: "800" },
 });
