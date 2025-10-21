@@ -14,7 +14,9 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-/* --- types --- */
+/* -------------------------
+   Types & Constants
+   ------------------------- */
 type Course = "Starters" | "Mains" | "Desserts";
 type Dish = {
   id: string;
@@ -25,10 +27,10 @@ type Dish = {
   createdAt: number;
 };
 
-/* --- constants --- */
 const STORAGE_KEY = "@chef_menu_items_v2";
 const COURSES: Course[] = ["Starters", "Mains", "Desserts"];
-const COLORS = {
+
+const THEME = {
   primary: "#246BFD",
   accent: "#FF6B6B",
   bg: "#F6F8FB",
@@ -37,88 +39,85 @@ const COLORS = {
   muted: "#6B7280",
 };
 
-/* --- App --- */
-export default function App(): JSX.Element {
-  const [menu, setMenu] = useState<Dish[]>([]);
-  const [screen, setScreen] = useState<"customer" | "chef">("customer");
+/* -------------------------
+   Storage helpers
+   ------------------------- */
+async function loadMenu(): Promise<Dish[]> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Dish[];
+  } catch {
+    return [];
+  }
+}
+async function saveMenu(items: Dish[]) {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    /* ignore write errors */
+  }
+}
 
-
-  useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((r) => {
-        if (r) {
-          try {
-            const parsed = JSON.parse(r) as Dish[];
-            setMenu(parsed);
-          } catch {
-            // ignore parse error
-          }
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const persist = async (items: Dish[]) => {
-    setMenu(items);
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch {
-      // ignore
-    }
-  };
-
-  const addDish = (d: Omit<Dish, "id" | "createdAt">) => {
-    const newDish: Dish = { ...d, id: String(Date.now()), createdAt: Date.now() };
-    persist([newDish, ...menu]);
-    setScreen("customer");
-  };
-
-  const removeDish = (id: string) => {
-    const doDelete = () => {
-      const next = menu.filter((m) => m.id !== id);
-      persist(next);
-    };
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      if (window.confirm("Delete this dish?")) doDelete();
-      return;
-    }
-    Alert.alert("Delete", "Remove this dish?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: doDelete },
-    ]);
-  };
-
+/* -------------------------
+   Small components
+   ------------------------- */
+function AppHeader({ title, subtitle, count }: { title: string; subtitle?: string; count?: number }) {
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar backgroundColor={COLORS.primary} barStyle="light-content" />
-      <View style={styles.appHeader}>
-        <Text style={styles.appTitle}>Chef Christoffel</Text>
-        <Text style={styles.appSubtitle}>Fresh menu — always up to date</Text>
-
-        <Text style={styles.appCount}>{menu.length} dishes</Text>
-      </View>
-
-      <View style={styles.screenWrap}>
-        {screen === "customer" ? (
-          <CustomerScreen menu={menu} onOpenChef={() => setScreen("chef")} />
-        ) : (
-          <ChefScreen menu={menu} onAdd={addDish} onRemove={removeDish} onBack={() => setScreen("customer")} />
-        )}
-      </View>
-
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={[styles.tab, screen === "customer" && styles.tabActive]} onPress={() => setScreen("customer")}>
-          <Text style={[styles.tabText, screen === "customer" && styles.tabTextActive]}>Customer</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.tab, screen === "chef" && styles.tabActive]} onPress={() => setScreen("chef")}>
-          <Text style={[styles.tabText, screen === "chef" && styles.tabTextActive]}>Manager</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+    <View style={styles.appHeader}>
+      <Text style={styles.appTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.appSubtitle}>{subtitle}</Text> : null}
+      {typeof count === "number" ? <Text style={styles.appCount}>{count} dishes</Text> : null}
+    </View>
   );
 }
+
+function BottomNav({ screen, setScreen }: { screen: "customer" | "chef"; setScreen: (s: "customer" | "chef") => void }) {
+  return (
+    <View style={styles.bottomNav}>
+      <TouchableOpacity style={[styles.tab, screen === "customer" && styles.tabActive]} onPress={() => setScreen("customer")}>
+        <Text style={[styles.tabText, screen === "customer" && styles.tabTextActive]}>Customer</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.tab, screen === "chef" && styles.tabActive]} onPress={() => setScreen("chef")}>
+        <Text style={[styles.tabText, screen === "chef" && styles.tabTextActive]}>Manager</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function DishCard({ item, onAddQty, onRemove }: { item: Dish; onAddQty?: (id: string, delta: number) => void; onRemove?: (id: string) => void }) {
+  return (
+    <View style={styles.card}>
+      <View style={[styles.cardStrip, { backgroundColor: courseColor(item.course) }]} />
+      <Text style={styles.cardTitle}>{item.name}</Text>
+      <Text style={styles.cardCourse}>{item.course}</Text>
+      {item.description ? <Text style={styles.cardDesc}>{item.description}</Text> : null}
+      <View style={styles.cardFooter}>
+        <Text style={styles.cardPrice}>R{item.price.toFixed(2)}</Text>
+        <View style={styles.row}>
+          {onAddQty ? (
+            <>
+              <TouchableOpacity onPress={() => onAddQty(item.id, -1)} style={styles.qtyBtn}>
+                <Text style={styles.qtyTxt}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => onAddQty(item.id, +1)} style={styles.qtyBtn}>
+                <Text style={styles.qtyTxt}>+</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
+          {onRemove ? (
+            <TouchableOpacity onPress={() => onRemove(item.id)} style={styles.removeBtnSmall}>
+              <Text style={styles.removeTxtSmall}>Remove</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function CustomerScreen({ menu, onOpenChef }: { menu: Dish[]; onOpenChef: () => void }) {
-  const [filter, setFilter] = useState<"All" | Course | "Search">("All");
+  const [filter, setFilter] = useState<"All" | Course>("All");
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<Record<string, number>>({});
 
@@ -177,26 +176,7 @@ function CustomerScreen({ menu, onOpenChef }: { menu: Dish[]; onOpenChef: () => 
             <Text style={styles.emptyText}>No dishes available.</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={[styles.cardStrip, { backgroundColor: courseColor(item.course) }]} />
-            <Text style={styles.cardTitle}>{item.name}</Text>
-            <Text style={styles.cardCourse}>{item.course}</Text>
-            <Text style={styles.cardDesc}>{item.description}</Text>
-            <View style={styles.cardFooter}>
-              <Text style={styles.cardPrice}>R{item.price.toFixed(2)}</Text>
-              <View style={styles.qtyRow}>
-                <TouchableOpacity onPress={() => changeQty(item.id, -1)} style={styles.qtyBtn}>
-                  <Text style={styles.qtyTxt}>−</Text>
-                </TouchableOpacity>
-                <Text style={styles.qtyNumber}>{cart[item.id] || 0}</Text>
-                <TouchableOpacity onPress={() => changeQty(item.id, 1)} style={styles.qtyBtn}>
-                  <Text style={styles.qtyTxt}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        )}
+        renderItem={({ item }) => <DishCard item={item} onAddQty={changeQty} />}
       />
 
       <View style={styles.cartBar}>
@@ -209,8 +189,17 @@ function CustomerScreen({ menu, onOpenChef }: { menu: Dish[]; onOpenChef: () => 
   );
 }
 
-/* --- Chef screen --- */
-function ChefScreen({ menu, onAdd, onRemove, onBack }: { menu: Dish[]; onAdd: (d: Omit<Dish, "id" | "createdAt">) => void; onRemove: (id: string) => void; onBack: () => void }) {
+function ChefScreen({
+  menu,
+  onAdd,
+  onRemove,
+  onBack,
+}: {
+  menu: Dish[];
+  onAdd: (d: Omit<Dish, "id" | "createdAt">) => void;
+  onRemove: (id: string) => void;
+  onBack: () => void;
+}) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [course, setCourse] = useState<Course>("Mains");
@@ -281,7 +270,61 @@ function ChefScreen({ menu, onAdd, onRemove, onBack }: { menu: Dish[]; onAdd: (d
   );
 }
 
-/* --- helpers & styles --- */
+
+export default function App(): JSX.Element {
+  const [menu, setMenuState] = useState<Dish[]>([]);
+  const [screen, setScreen] = useState<"customer" | "chef">("customer");
+
+  useEffect(() => {
+    (async () => {
+      const loaded = await loadMenu();
+      setMenuState(loaded);
+    })();
+  }, []);
+
+  const persist = async (items: Dish[]) => {
+    setMenuState(items);
+    await saveMenu(items);
+  };
+
+  const addDish = (d: Omit<Dish, "id" | "createdAt">) => {
+    const newDish: Dish = { ...d, id: String(Date.now()), createdAt: Date.now() };
+    persist([newDish, ...menu]);
+    setScreen("customer");
+  };
+
+  const removeDish = (id: string) => {
+    const doDelete = () => {
+      const next = menu.filter((m) => m.id !== id);
+      persist(next);
+    };
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm("Delete this dish?")) doDelete();
+      return;
+    }
+    Alert.alert("Delete", "Remove this dish?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: doDelete },
+    ]);
+  };
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar backgroundColor={THEME.primary} barStyle="light-content" />
+      <AppHeader title="Chef Christoffel" subtitle="Fresh menu — always up to date" count={menu.length} />
+
+      <View style={styles.screenWrap}>
+        {screen === "customer" ? <CustomerScreen menu={menu} onOpenChef={() => setScreen("chef")} /> : <ChefScreen menu={menu} onAdd={addDish} onRemove={removeDish} onBack={() => setScreen("customer")} />}
+      </View>
+
+      <BottomNav screen={screen} setScreen={setScreen} />
+    </SafeAreaView>
+  );
+}
+
+/* -------------------------
+   Helpers & Styles
+   ------------------------- */
 function courseColor(c: Course) {
   if (c === "Starters") return "#FFB86B";
   if (c === "Mains") return "#6BB0FF";
@@ -289,8 +332,8 @@ function courseColor(c: Course) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  appHeader: { padding: 16, paddingTop: 20, backgroundColor: COLORS.primary },
+  safe: { flex: 1, backgroundColor: THEME.bg },
+  appHeader: { padding: 16, paddingTop: 20, backgroundColor: THEME.primary },
   appTitle: { color: "#fff", fontSize: 22, fontWeight: "800" },
   appSubtitle: { color: "#D6E4FF", marginTop: 4 },
   appCount: { color: "#fff", marginTop: 6, fontWeight: "700" },
@@ -302,68 +345,72 @@ const styles = StyleSheet.create({
   customerHeader: { paddingHorizontal: 12, paddingTop: 12 },
   filterRow: { flexDirection: "row", marginBottom: 8 },
   filterPill: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 20, backgroundColor: "#fff", marginRight: 8, borderWidth: 1, borderColor: "#eee" },
-  filterActive: { backgroundColor: "#fff", borderColor: COLORS.primary, shadowColor: "#000", elevation: 2 },
-  filterText: { color: COLORS.muted, fontWeight: "700" },
-  filterTextActive: { color: COLORS.primary },
+  filterActive: { backgroundColor: "#fff", borderColor: THEME.primary, shadowColor: "#000", elevation: 2 },
+  filterText: { color: THEME.muted, fontWeight: "700" },
+  filterTextActive: { color: THEME.primary },
 
-  searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  searchRow: { flexDirection: "row", alignItems: "center" as const },
   searchInput: { flex: 1, backgroundColor: "#fff", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#eee" },
-  smallBtn: { marginLeft: 8, backgroundColor: COLORS.accent, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  smallBtn: { marginLeft: 8, backgroundColor: THEME.accent, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   smallBtnText: { color: "#fff", fontWeight: "800" },
 
-  gridRow: { justifyContent: "space-between" },
-  card: { flex: 1, backgroundColor: COLORS.card, borderRadius: 10, padding: 12, marginBottom: 12, marginHorizontal: 6, minWidth: 140, maxWidth: "48%" },
+  gridRow: { justifyContent: "space-between" as const },
+  card: { flex: 1, backgroundColor: THEME.card, borderRadius: 10, padding: 12, marginBottom: 12, marginHorizontal: 6, minWidth: 140, maxWidth: "48%" },
   cardStrip: { height: 6, borderRadius: 4, marginBottom: 8 },
-  cardTitle: { fontWeight: "800", color: COLORS.text },
-  cardCourse: { color: COLORS.muted, fontSize: 12, marginTop: 4 },
-  cardDesc: { color: COLORS.muted, fontSize: 13, marginTop: 8, minHeight: 36 },
-  cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10 },
-  cardPrice: { fontWeight: "900", color: COLORS.text },
-  qtyRow: { flexDirection: "row", alignItems: "center" },
+  cardTitle: { fontWeight: "800", color: THEME.text },
+  cardCourse: { color: THEME.muted, fontSize: 12, marginTop: 4 },
+  cardDesc: { color: THEME.muted, fontSize: 13, marginTop: 8, minHeight: 36 },
+  cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" as const, marginTop: 10 },
+  cardPrice: { fontWeight: "900", color: THEME.text },
+  row: { flexDirection: "row", alignItems: "center" as const },
+
   qtyBtn: { padding: 6, borderRadius: 6, backgroundColor: "#F3F4F6", marginHorizontal: 6 },
   qtyTxt: { fontWeight: "900" },
-  qtyNumber: { minWidth: 18, textAlign: "center", fontWeight: "800" },
+  qtyNumber: { minWidth: 18, textAlign: "center" as const, fontWeight: "800" },
 
-  cartBar: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: COLORS.card, borderRadius: 12, padding: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#000", elevation: 3 },
-  cartText: { color: COLORS.text, fontWeight: "700" },
-  primaryBtn: { backgroundColor: COLORS.primary, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  cartBar: { position: "absolute" as const, left: 12, right: 12, bottom: 12, backgroundColor: THEME.card, borderRadius: 12, padding: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" as const, shadowColor: "#000", elevation: 3 },
+  cartText: { color: THEME.text, fontWeight: "700" },
+  primaryBtn: { backgroundColor: THEME.primary, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   primaryBtnText: { color: "#fff", fontWeight: "800" },
 
-  empty: { padding: 24, alignItems: "center" },
-  emptyText: { color: COLORS.muted },
+  empty: { padding: 24, alignItems: "center" as const },
+  emptyText: { color: THEME.muted },
 
   /* bottom nav */
-  bottomNav: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#eee", backgroundColor: "#fff" },
-  tab: { flex: 1, padding: 12, alignItems: "center" },
+  bottomNav: { flexDirection: "row" as const, borderTopWidth: 1, borderTopColor: "#eee", backgroundColor: "#fff" },
+  tab: { flex: 1, padding: 12, alignItems: "center" as const },
   tabActive: { backgroundColor: "#F0F6FF" },
-  tabText: { color: COLORS.muted, fontWeight: "800" },
-  tabTextActive: { color: COLORS.primary },
+  tabText: { color: THEME.muted, fontWeight: "800" },
+  tabTextActive: { color: THEME.primary },
 
   /* chef */
   chefWrap: { flex: 1 },
   chefTop: { padding: 12, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#eee" },
   linkBack: { marginBottom: 6 },
-  linkBackText: { color: COLORS.primary, fontWeight: "800" },
-  chefTitle: { fontSize: 18, fontWeight: "900", color: COLORS.text },
-  chefSubtitle: { color: COLORS.muted, marginTop: 4 },
+  linkBackText: { color: THEME.primary, fontWeight: "800" },
+  chefTitle: { fontSize: 18, fontWeight: "900", color: THEME.text },
+  chefSubtitle: { color: THEME.muted, marginTop: 4 },
 
   form: { padding: 12, backgroundColor: "#fff", marginTop: 8 },
   input: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee", padding: 10, borderRadius: 8, marginTop: 8 },
-  courseSelect: { flexDirection: "row", marginTop: 8 },
-  courseOption: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, borderWidth: 1, borderColor: "#eee", backgroundColor: "#fff", marginRight: 8 },
-  courseOptionActive: { backgroundColor: COLORS.primary },
-  courseText: { color: COLORS.text, fontWeight: "700" },
+  courseSelect: { flexDirection: "row" as const, marginTop: 8 },
+  courseOption: { flex: 1, paddingVertical: 10, alignItems: "center" as const, borderRadius: 8, borderWidth: 1, borderColor: "#eee", backgroundColor: "#fff", marginRight: 8 },
+  courseOptionActive: { backgroundColor: THEME.primary },
+  courseText: { color: THEME.text, fontWeight: "700" },
   courseTextActive: { color: "#fff" },
-  formActions: { flexDirection: "row", marginTop: 12 },
-  ghostBtn: { flex: 1, borderWidth: 1, borderColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center", marginRight: 8 },
-  ghostTxt: { fontWeight: "800", color: COLORS.muted },
-  addBtn: { flex: 1, backgroundColor: COLORS.primary, padding: 12, borderRadius: 8, alignItems: "center" },
+  formActions: { flexDirection: "row" as const, marginTop: 12 },
+  ghostBtn: { flex: 1, borderWidth: 1, borderColor: "#eee", padding: 12, borderRadius: 8, alignItems: "center" as const, marginRight: 8 },
+  ghostTxt: { fontWeight: "800", color: THEME.muted },
+  addBtn: { flex: 1, backgroundColor: THEME.primary, padding: 12, borderRadius: 8, alignItems: "center" as const },
   addBtnText: { color: "#fff", fontWeight: "900" },
 
-  listRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12, backgroundColor: COLORS.card, marginBottom: 8, borderRadius: 8 },
-  listTitle: { fontWeight: "800", color: COLORS.text },
-  listMeta: { color: COLORS.muted, marginTop: 4 },
+  listRow: { flexDirection: "row" as const, justifyContent: "space-between", alignItems: "center", padding: 12, backgroundColor: THEME.card, marginBottom: 8, borderRadius: 8 },
+  listTitle: { fontWeight: "800", color: THEME.text },
+  listMeta: { color: THEME.muted, marginTop: 4 },
 
-  removeBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: COLORS.accent },
+  removeBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: THEME.accent },
   removeTxt: { color: "#fff", fontWeight: "800" },
+
+  removeBtnSmall: { marginLeft: 8, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 8, backgroundColor: "#FDE8E8" },
+  removeTxtSmall: { color: "#D04545", fontWeight: "800" },
 });
