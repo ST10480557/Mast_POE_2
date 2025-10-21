@@ -86,7 +86,6 @@ function Customer({ menu, openManager }: { menu: Dish[]; openManager: () => void
 
       <View style={s.cart}>
         <Text style={s.cartTxt}>{totalItems} items • R{totalPrice.toFixed(2)}</Text>
-        <TouchableOpacity onPress={()=>Alert.alert("Request","Request sent to Chef")} style={s.primary}><Text style={s.pTxt}>Request Experience</Text></TouchableOpacity>
       </View>
     </View>
   );
